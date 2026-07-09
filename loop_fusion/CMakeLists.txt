@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.5)
 project(loop_fusion)
 
 set(CMAKE_CXX_STANDARD 14)
+
+# Fix for ARM: prevent std::bad_array_new_length
+add_definitions(-DEIGEN_DONT_VECTORIZE)
 add_compile_options( -Wextra -Wpedantic) # -Wall : print warning
 set(CMAKE_BUILD_TYPE Release)
 

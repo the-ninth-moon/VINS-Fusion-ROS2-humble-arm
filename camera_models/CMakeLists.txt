@@ -3,6 +3,9 @@ project(camera_models)
 
 
 set(CMAKE_CXX_STANDARD 14)
+
+# Fix for ARM: prevent std::bad_array_new_length
+add_definitions(-DEIGEN_DONT_VECTORIZE)
 add_compile_options(-Wextra -Wpedantic)
 
 

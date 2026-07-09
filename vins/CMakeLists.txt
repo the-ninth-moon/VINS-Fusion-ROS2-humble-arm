@@ -4,6 +4,9 @@ project(vins)
 set(CMAKE_CXX_STANDARD 14)
 add_compile_options(-Wextra -Wpedantic)
 
+# Fix for ARM (Jetson Orin): disable Eigen over-alignment to prevent bad_array_new_length
+add_definitions(-DEIGEN_DONT_VECTORIZE)
+
 set(CMAKE_BUILD_TYPE Release)
 
 # find dependencies

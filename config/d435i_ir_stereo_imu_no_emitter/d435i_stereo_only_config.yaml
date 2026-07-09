@@ -1,0 +1,78 @@
+%YAML:1.0
+
+# Diagnostic stereo-only config for D435i infrared pair.
+# Use this to isolate visual tracking/calibration from IMU/extrinsic issues.
+
+# common parameters
+imu: 0
+num_of_cam: 2
+
+imu_topic: "/camera/camera/imu"
+image0_topic: "/camera/camera/infra1/image_rect_raw"
+image1_topic: "/camera/camera/infra2/image_rect_raw"
+output_path: "/tmp/"
+
+cam0_calib: "left.yaml"
+cam1_calib: "right.yaml"
+image_width: 424
+image_height: 240
+
+# GPU acceleration
+use_gpu: 0
+use_gpu_acc_flow: 0
+use_gpu_ceres: 0
+
+# Rectified stereo extrinsic for image_rect_raw topics.
+# Body is chosen as the left rectified camera frame; right camera is +x by
+# baseline = -P_right[3] / fx = 0.05014216571666752 m.
+estimate_extrinsic: 0
+
+body_T_cam0: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: d
+   data: [ 1.0, 0.0, 0.0, 0.0,
+           0.0, 1.0, 0.0, 0.0,
+           0.0, 0.0, 1.0, 0.0,
+           0.0, 0.0, 0.0, 1.0 ]
+
+body_T_cam1: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: d
+   data: [ 1.0, 0.0, 0.0, 0.05014216571666752,
+           0.0, 1.0, 0.0, 0.0,
+           0.0, 0.0, 1.0, 0.0,
+           0.0, 0.0, 0.0, 1.0 ]
+
+# Multiple thread support
+multiple_thread: 1
+
+# feature tracker parameters
+max_cnt: 120
+min_dist: 15
+freq: 10
+F_threshold: 1.0
+show_track: 0
+flow_back: 1
+
+# optimization parameters
+max_solver_time: 0.04
+max_num_iterations: 8
+keyframe_parallax: 7.0
+
+# IMU parameters are ignored when imu is 0.
+acc_n: 0.006
+gyr_n: 0.0004
+acc_w: 0.0002
+gyr_w: 0.000004
+g_norm: 9.805
+
+# Time offset is ignored when imu is 0.
+estimate_td: 0
+td: 0.0
+
+# loop closure parameters
+load_previous_pose_graph: 0
+pose_graph_save_path: "/tmp/pose_graph/"
+save_image: 0

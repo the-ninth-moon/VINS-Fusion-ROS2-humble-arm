@@ -14,6 +14,8 @@
 #include <map>
 #include <thread>
 #include <mutex>
+#include <execinfo.h>
+#include <csignal>
 #include <rclcpp/rclcpp.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
@@ -29,12 +31,16 @@ queue<sensor_msgs::msg::Image::ConstPtr> img0_buf;
 queue<sensor_msgs::msg::Image::ConstPtr> img1_buf;
 std::mutex m_buf;
 
+const size_t MAX_IMAGE_BUF_SIZE = 4;
+
 // header: 1403715278
 void img0_callback(const sensor_msgs::msg::Image::SharedPtr img_msg)
 {
     m_buf.lock();
     // std::cout << "Left : " << img_msg->header.stamp.sec << "." << img_msg->header.stamp.nanosec << endl;
     img0_buf.push(img_msg);
+    while (img0_buf.size() > MAX_IMAGE_BUF_SIZE)
+        img0_buf.pop();
     m_buf.unlock();
 }
 
@@ -43,6 +49,8 @@ void img1_callback(const sensor_msgs::msg::Image::SharedPtr img_msg)
     m_buf.lock();
     // std::cout << "Right: " << img_msg->header.stamp.sec << "." << img_msg->header.stamp.nanosec << endl;
     img1_buf.push(img_msg);
+    while (img1_buf.size() > MAX_IMAGE_BUF_SIZE)
+        img1_buf.pop();
     m_buf.unlock();
 }
 
@@ -86,16 +94,18 @@ void sync_process()
                 double time0 = img0_buf.front()->header.stamp.sec + img0_buf.front()->header.stamp.nanosec * (1e-9);
                 double time1 = img1_buf.front()->header.stamp.sec + img1_buf.front()->header.stamp.nanosec * (1e-9);
 
-                // 0.003s sync tolerance
-                if(time0 < time1 - 0.003)
+                // D435i infra streams can jitter a few ms through ROS2; keep the
+                // original strict behavior visible in logs while avoiding needless drops.
+                const double stereo_sync_tolerance = 0.010;
+                if(time0 < time1 - stereo_sync_tolerance)
                 {
                     img0_buf.pop();
-                    printf("throw img0\n");
+                    printf("throw img0, dt(left-right): %.6f\n", time0 - time1);
                 }
-                else if(time0 > time1 + 0.003)
+                else if(time0 > time1 + stereo_sync_tolerance)
                 {
                     img1_buf.pop();
-                    printf("throw img1\n");
+                    printf("throw img1, dt(left-right): %.6f\n", time0 - time1);
                 }
                 else
                 {
@@ -237,13 +247,22 @@ void cam_switch_callback(const std_msgs::msg::Bool::SharedPtr switch_msg)
     return;
 }
 
+void segfault_handler(int sig) {
+    void *array[20];
+    size_t size = backtrace(array, 20);
+    fprintf(stderr, "Error: signal %d:\n", sig);
+    backtrace_symbols_fd(array, size, STDERR_FILENO);
+    exit(1);
+}
+
 int main(int argc, char **argv)
 {
+    signal(SIGSEGV, segfault_handler);
     rclcpp::init(argc, argv);
 	auto n = rclcpp::Node::make_shared("vins_estimator");
     // ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
 
-    if(argc != 2)
+    if(argc < 2)
     {
         printf("please intput: rosrun vins vins_node [config file] \n"
                "for example: rosrun vins vins_node "
@@ -265,19 +284,20 @@ int main(int argc, char **argv)
 
     registerPub(n);
 
+    auto sensor_qos = rclcpp::SensorDataQoS();
 
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu = NULL;
     if(USE_IMU)
     {
-        sub_imu = n->create_subscription<sensor_msgs::msg::Imu>(IMU_TOPIC, rclcpp::QoS(rclcpp::KeepLast(2000)), imu_callback);
+        sub_imu = n->create_subscription<sensor_msgs::msg::Imu>(IMU_TOPIC, sensor_qos, imu_callback);
     }
     auto sub_feature = n->create_subscription<sensor_msgs::msg::PointCloud>("/feature_tracker/feature", rclcpp::QoS(rclcpp::KeepLast(2000)), feature_callback);
-    auto sub_img0 = n->create_subscription<sensor_msgs::msg::Image>(IMAGE0_TOPIC, rclcpp::QoS(rclcpp::KeepLast(100)), img0_callback);
+    auto sub_img0 = n->create_subscription<sensor_msgs::msg::Image>(IMAGE0_TOPIC, sensor_qos, img0_callback);
     
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_img1 = NULL;
     if(STEREO)
     {
-        sub_img1 = n->create_subscription<sensor_msgs::msg::Image>(IMAGE1_TOPIC, rclcpp::QoS(rclcpp::KeepLast(100)), img1_callback);
+        sub_img1 = n->create_subscription<sensor_msgs::msg::Image>(IMAGE1_TOPIC, sensor_qos, img1_callback);
     }
     
     auto sub_restart = n->create_subscription<std_msgs::msg::Bool>("/vins_restart", rclcpp::QoS(rclcpp::KeepLast(100)), restart_callback);

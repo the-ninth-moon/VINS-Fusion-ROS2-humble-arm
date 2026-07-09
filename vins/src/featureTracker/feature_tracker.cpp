@@ -173,18 +173,25 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
             cv::cuda::GpuMat prev_gpu_pts(prev_pts);
             cv::cuda::GpuMat cur_gpu_pts(cur_pts);
             cv::cuda::GpuMat gpu_status;
+
+            // Reuse optical flow object to avoid repeated GPU memory allocation
+            cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> d_pyrLK = cv::cuda::SparsePyrLKOpticalFlow::create(
+                cv::Size(21, 21), hasPrediction ? 1 : 3, 30, hasPrediction);
+
             if(hasPrediction)
-            {
                 cur_gpu_pts = cv::cuda::GpuMat(predict_pts);
-                cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> d_pyrLK_sparse = cv::cuda::SparsePyrLKOpticalFlow::create(
-                cv::Size(21, 21), 1, 30, true);
-                d_pyrLK_sparse->calc(prev_gpu_img, cur_gpu_img, prev_gpu_pts, cur_gpu_pts, gpu_status);
-                
-                vector<cv::Point2f> tmp_cur_pts(cur_gpu_pts.cols);
+
+            d_pyrLK->calc(prev_gpu_img, cur_gpu_img, prev_gpu_pts, cur_gpu_pts, gpu_status);
+
+            // Guard: validate GpuMat before download
+            int n_pts = std::max(0, cur_gpu_pts.cols);
+            if (n_pts > 0 && !gpu_status.empty())
+            {
+                vector<cv::Point2f> tmp_cur_pts(n_pts);
                 cur_gpu_pts.download(tmp_cur_pts);
                 cur_pts = tmp_cur_pts;
 
-                vector<uchar> tmp_status(gpu_status.cols);
+                vector<uchar> tmp_status(n_pts);
                 gpu_status.download(tmp_status);
                 status = tmp_status;
 
@@ -194,59 +201,57 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
                     if (tmp_status[i])
                         succ_num++;
                 }
-                if (succ_num < 10)
+                if (succ_num < 10 && hasPrediction)
                 {
-                    cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> d_pyrLK_sparse = cv::cuda::SparsePyrLKOpticalFlow::create(
-                    cv::Size(21, 21), 3, 30, false);
-                    d_pyrLK_sparse->calc(prev_gpu_img, cur_gpu_img, prev_gpu_pts, cur_gpu_pts, gpu_status);
+                    // Retry without initial flow
+                    cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> d_pyrLK_retry = cv::cuda::SparsePyrLKOpticalFlow::create(
+                        cv::Size(21, 21), 3, 30, false);
+                    d_pyrLK_retry->calc(prev_gpu_img, cur_gpu_img, prev_gpu_pts, cur_gpu_pts, gpu_status);
 
-                    vector<cv::Point2f> tmp1_cur_pts(cur_gpu_pts.cols);
-                    cur_gpu_pts.download(tmp1_cur_pts);
-                    cur_pts = tmp1_cur_pts;
+                    n_pts = std::max(0, cur_gpu_pts.cols);
+                    if (n_pts > 0 && !gpu_status.empty())
+                    {
+                        vector<cv::Point2f> tmp1_cur_pts(n_pts);
+                        cur_gpu_pts.download(tmp1_cur_pts);
+                        cur_pts = tmp1_cur_pts;
 
-                    vector<uchar> tmp1_status(gpu_status.cols);
-                    gpu_status.download(tmp1_status);
-                    status = tmp1_status;
+                        vector<uchar> tmp1_status(n_pts);
+                        gpu_status.download(tmp1_status);
+                        status = tmp1_status;
+                    }
+                    d_pyrLK_retry.release();
                 }
             }
-            else
-            {
-                cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> d_pyrLK_sparse = cv::cuda::SparsePyrLKOpticalFlow::create(
-                cv::Size(21, 21), 3, 30, false);
-                d_pyrLK_sparse->calc(prev_gpu_img, cur_gpu_img, prev_gpu_pts, cur_gpu_pts, gpu_status);
 
-                vector<cv::Point2f> tmp1_cur_pts(cur_gpu_pts.cols);
-                cur_gpu_pts.download(tmp1_cur_pts);
-                cur_pts = tmp1_cur_pts;
-
-                vector<uchar> tmp1_status(gpu_status.cols);
-                gpu_status.download(tmp1_status);
-                status = tmp1_status;
-            }
-            if(FLOW_BACK)
+            // Forward-backward flow check
+            if(FLOW_BACK && !status.empty())
             {
                 cv::cuda::GpuMat reverse_gpu_status;
                 cv::cuda::GpuMat reverse_gpu_pts = prev_gpu_pts;
-                cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> d_pyrLK_sparse = cv::cuda::SparsePyrLKOpticalFlow::create(
-                cv::Size(21, 21), 1, 30, true);
-                d_pyrLK_sparse->calc(cur_gpu_img, prev_gpu_img, cur_gpu_pts, reverse_gpu_pts, reverse_gpu_status);
+                cv::Ptr<cv::cuda::SparsePyrLKOpticalFlow> d_pyrLK_back = cv::cuda::SparsePyrLKOpticalFlow::create(
+                    cv::Size(21, 21), 1, 30, true);
+                d_pyrLK_back->calc(cur_gpu_img, prev_gpu_img, cur_gpu_pts, reverse_gpu_pts, reverse_gpu_status);
 
-                vector<cv::Point2f> reverse_pts(reverse_gpu_pts.cols);
-                reverse_gpu_pts.download(reverse_pts);
-
-                vector<uchar> reverse_status(reverse_gpu_status.cols);
-                reverse_gpu_status.download(reverse_status);
-
-                for(size_t i = 0; i < status.size(); i++)
+                int n_rev = std::max(0, reverse_gpu_pts.cols);
+                if (n_rev > 0 && !reverse_gpu_status.empty())
                 {
-                    if(status[i] && reverse_status[i] && distance(prev_pts[i], reverse_pts[i]) <= 0.5)
+                    vector<cv::Point2f> reverse_pts(n_rev);
+                    reverse_gpu_pts.download(reverse_pts);
+
+                    vector<uchar> reverse_status(n_rev);
+                    reverse_gpu_status.download(reverse_status);
+
+                    for(size_t i = 0; i < status.size() && i < reverse_status.size(); i++)
                     {
-                        status[i] = 1;
+                        if(status[i] && reverse_status[i] && distance(prev_pts[i], reverse_pts[i]) <= 0.5)
+                            status[i] = 1;
+                        else
+                            status[i] = 0;
                     }
-                    else
-                        status[i] = 0;
                 }
+                d_pyrLK_back.release();
             }
+            d_pyrLK.release();
             // printf("gpu temporal optical flow costs: %f ms\n",t_og.toc());
         }
 #endif
@@ -268,7 +273,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
 
     if (1)
     {
-        //rejectWithF();
+        rejectWithF();
         ROS_DEBUG("set mask begins");
         TicToc t_m;
         setMask();
