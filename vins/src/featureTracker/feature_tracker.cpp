@@ -421,7 +421,7 @@ map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> FeatureTracker::trackIm
                             status[i] = 0;
                     }
                 }
-                // printf("gpu left right optical flow cost %fms\n",t_og1.toc());
+                // printf("gpu left-right optical flow cost: %fms\n",t_og1.toc());
             }
 #endif
             ids_right = ids;
