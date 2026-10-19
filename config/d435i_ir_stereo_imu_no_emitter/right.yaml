@@ -2,15 +2,15 @@
 ---
 model_type: PINHOLE
 camera_name: d435i_infra2
-image_width: 424
-image_height: 240
+image_width: 640
+image_height: 480
 distortion_parameters:
-   k1: 0.0
-   k2: 0.0
-   p1: 0.0
-   p2: 0.0
+   k1: 0.00826602
+   k2: -0.00587484
+   p1: -0.00072262
+   p2: 0.00096606
 projection_parameters:
-   fx: 216.9025421142578
-   fy: 216.9025421142578
-   cx: 211.16722106933594
-   cy: 120.11483764648438
+   fx: 393.90921989
+   fy: 397.55992318
+   cx: 321.64863535
+   cy: 238.77211833
