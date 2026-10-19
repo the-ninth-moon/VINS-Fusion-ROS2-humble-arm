@@ -87,6 +87,41 @@ rviz2 -d src/VINS-Fusion-ROS2-humble-arm/config/vins_rviz_config.rviz
 ros2 bag play MH_01_easy_ros2
 ```
 
+## Run (live RealSense D435i)
+
+The D435i setup is calibrated (Kalibr) and pre-configured in
+`config/d435i_ir_stereo_imu_no_emitter/`. A one-click launcher is provided:
+
+```bash
+cd ~/vins_ws/src/VINS-Fusion-ROS2-humble-arm
+
+./scripts/start_vins.sh            # camera + VIO
+./scripts/start_vins.sh --all      # + RViz, loop closure, trajectory CSV
+./scripts/start_vins.sh --bag DIR  # replay a ros2 bag instead of the camera
+./scripts/start_vins.sh -h
+```
+
+It starts the RealSense driver with the settings the calibration depends on,
+refuses to run if the stream does not match, and Ctrl+C stops everything it
+started (logs in `/tmp/opencode/vins_logs/`).
+
+Required driver settings (the launcher sets them; keep them if you start the
+camera manually):
+
+| Setting | Value | Why |
+|---|---|---|
+| `depth_module.infra_profile` | `640,480,30` | the calibration is 640x480; the driver default (848x480) breaks pixel geometry and VINS diverges |
+| `enable_sync` | `true` | keeps IR1/IR2 timestamps paired (~35% of frames are dropped without it) |
+| `unite_imu_method` | `2` (linear_interpolation) | provides the `/camera/camera/imu` topic |
+| `depth_module.emitter_enabled` | `0` | calibrated with the IR emitter off |
+
+**Use CPU mode (`use_gpu: 0`).** GPU feature tracking / optical flow diverges
+badly with the live D435i stream on Jetson: position error >100 m and vertical
+drift to 85 m within seconds of moving, plus position creep after stopping.
+The CPU path is accurate -- 0.19 m loop-closure error over a 28.5 m indoor walk
+(0.65%) with no drift while standing still. For reference, this build reaches
+0.258 m RMSE (0.32%) on EuRoC MH_01 against the Leica ground truth.
+
 ## Other Configurations
 
 Pre-configured sensor configs available under `config/`:
